@@ -4,7 +4,9 @@ Live classes + assignments for WDF bursary learners. Built Sept 2026 with Nosiph
 COO, the product owner). **Paida takes over from here.** Server credentials are NOT in this repo —
 Nosipho sends them separately. Never commit secrets (see "Secrets").
 
-**Status: working and live, used as a pilot.** Web: https://learn.wdf.church · Android APK:
+**Status: live and in real use** — on 28 Sep 2026 already 25 real graduates and ~3,900 synced
+learners. **Never reset or test against the production data any more** (`/opt/wdf-classes/data.json`);
+test locally (see Tests). Back up `data.json` before every deploy. Web: https://learn.wdf.church · Android APK:
 https://learn.wdf.church/wdf-classes.apk · Video server: wss://classes.wdf.church (self-hosted LiveKit).
 
 ## What it does
@@ -14,10 +16,14 @@ https://learn.wdf.church/wdf-classes.apk · Video server: wss://classes.wdf.chur
 - **Teachers**: timetable CRUD (weekly repeats), run live classes (screen share on web, mute/remove,
   raise-hand, chat), post assignments with deadline + brief, extend deadlines (whole subject or one
   learner), mark in % with feedback, see attendance.
-- **Graduates** (only *accepted Monarch* graduates = each church's "Head of Curriculum"): sign in
-  with their **app.wdf.church login**, see their church's learners (pulled live from the WDF
-  Tracker), enrol them (subjects pre-ticked from the bursary form), hand out logins (copy / Send on
-  WhatsApp), reset passwords, get alerted when learners sign in. WDF graduates are refused.
+- **Graduates** sign in with their **app.wdf.church login** (accepted graduates only):
+  - *Monarch* graduates (each church's "Head of Curriculum") — their church's learners are pulled
+    live from the WDF Tracker each time they open Students.
+  - *WDF* graduates — share the Monarch graduate's list for the same church (the Tracker refuses
+    them the roster, so they see the list as last loaded by the Monarch graduate; if it was never
+    loaded they get a clear "ask your Monarch graduate / contact the WDF office" message).
+  Both can enrol (subjects pre-ticked from the bursary form), hand out logins (copy / Send on
+  WhatsApp), reset passwords, and both are alerted when a learner signs in.
 - The church app (app.wdf.church, "Faith Hub") also shows a **WDF Classes box** on each student card
   for Monarch graduates (enrolled?, username/password, last sign-in).
 
@@ -73,7 +79,8 @@ DEV_PASSWORD, TRACKER_URL, PUBLIC_URL.
 - E2E (needs Chrome + `npm i` in test/e2e): `node assign.js` (photo gate, upload, real-time alerts,
   marking, extensions) and `node graduate.js` (enrol, generated login, sign-in alert). Point at prod
   with `WEB=https://learn.wdf.church PW=<demo password>`. **Run each on fresh data** (reset between),
-  they change state. After testing prod, reset its data (stop service, delete data.json + uploads/, start).
+  they change state. **Do not run them against production** — it holds real graduates and learners now.
+  `test/e2e/mock-tracker.js` fakes the Tracker (Monarch, WDF, not-accepted graduates) for local runs.
 - Flutter web testing tips: enable semantics by clicking `flt-semantics-placeholder`; type with a
   400 ms pause after focusing a field and ~40 ms per key (fast typing drops characters); Flutter
   merges a card's texts into one aria-label, so match text inside labels (see `find()` in the tests);
@@ -86,6 +93,7 @@ dart compile exe tool/dev_server.dart --target-os linux --target-arch x64 -o bui
 flutter build web --wasm --release --dart-define=API_URL=https://learn.wdf.church -o build/web_prod
 tar czf build/deploy/web.tgz -C build/web_prod .
 # copy both to /tmp on the box, then as root:
+#   cp data.json data.json.bak-$(date +%s)   # ALWAYS back up live data first
 #   systemctl stop wdf-classes; install -m755 /tmp/classes-api /opt/wdf-classes/classes-api
 #   keep web/wdf-classes.apk!  rm -rf web/*; tar xzf /tmp/web.tgz -C web; put the apk back
 #   systemctl start wdf-classes

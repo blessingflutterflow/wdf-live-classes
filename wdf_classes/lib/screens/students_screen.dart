@@ -127,7 +127,7 @@ class _StudentsScreenState extends State<StudentsScreen> {
           ? Center(
               child: _error == null
                   ? const CircularProgressIndicator(color: C.primary)
-                  : EmptyState(icon: Icons.wifi_off_rounded, text: _error!, action: ('Try again', _load)),
+                  : EmptyState(icon: Icons.info_outline_rounded, text: _error!, action: ('Try again', _load)),
             )
           : LayoutBuilder(builder: (context, box) {
               final wide = box.maxWidth >= 1000;

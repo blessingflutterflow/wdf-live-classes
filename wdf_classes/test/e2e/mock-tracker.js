@@ -3,6 +3,8 @@ const http = require('http');
 const grads = {
   '0820000001': { id: 'gradA', name: 'Precious Mahlangu', pw: 'secret1', status: 'ACCEPTED', acceptedCompany: 'MONARCH', churchId: 'chA', church: 'Bethel Assembly' },
   '0820000002': { id: 'gradB', name: 'Wdf Person', pw: 'secret2', status: 'ACCEPTED', acceptedCompany: 'WDF', churchId: 'chB', church: 'Other Church' },
+  '0820000003': { id: 'gradC', name: 'Sibusiso Wdf', pw: 'secret3', status: 'ACCEPTED', acceptedCompany: 'WDF', churchId: 'chA', church: 'Bethel Assembly' },
+  '0820000004': { id: 'gradD', name: 'Still Applying', pw: 'secret4', status: 'APPLIED', acceptedCompany: null, churchId: 'chA', church: 'Bethel Assembly' },
 };
 const students = {
   chA: [

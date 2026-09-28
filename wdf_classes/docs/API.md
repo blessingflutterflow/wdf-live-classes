@@ -13,7 +13,7 @@ Uploads: raw bytes, `content-type: application/octet-stream`, filename in `x-fil
 | role | who | signs in with |
 |---|---|---|
 | `teacher` | runs classes, posts & marks assignments | demo email (`teacher@wdf.test`) |
-| `graduate` | Monarch graduate = church "Head of Curriculum"; enrols learners | **their app.wdf.church (Tracker) login** — checked live against the Tracker; or demo `graduate@wdf.test` |
+| `graduate` | accepted Monarch graduate (church "Head of Curriculum") or accepted WDF graduate; enrols learners | **their app.wdf.church (Tracker) login** — checked live against the Tracker; or demo `graduate@wdf.test` |
 | `learner` | attends, submits, sees marks | username (firstname+4 digits) + 6-digit password generated when a graduate enrols them |
 
 Demo emails use one shared password (`DEV_PASSWORD` env; `classes` locally).
@@ -21,8 +21,8 @@ Demo emails use one shared password (`DEV_PASSWORD` env; `classes` locally).
 ## Auth / profile
 - `POST /auth/login` `{email, password}` — `email` may be an email, a learner username, or a cell number.
   Order: local user (email/username) → otherwise, if `TRACKER_URL` is set, Tracker graduate login
-  (`/api/graduate/login` then `/api/graduate/me`; only `status=ACCEPTED` and `company=MONARCH` pass).
-  → `{token, user: {id, name, role, photo}}`. Learners not yet enrolled get 403.
+  (`/api/graduate/login` then `/api/graduate/me`; only `status=ACCEPTED` with `company` MONARCH or WDF pass).
+  → `{token, user: {id, name, role, company?, photo}}`. Learners not yet enrolled get 403.
 - `GET /me` → user
 - `POST /me/photo` (raw JPEG) → user. Learners must have a photo before using the app.
 
@@ -52,8 +52,9 @@ Submission: `{learner, dueAt (incl. extension), extended, fileName, fileUrl, sub
 - Files: `GET /files/<key>?exp=&sig=` — signed, expiring links (no auth header so they open in a tab).
 
 ## Graduates: enrolment
-- `GET /students` → the graduate's church roster. For Tracker graduates this first syncs from Tracker
-  `/api/graduate/students` (learner ids `m_<memberId>` or `e_<enrollmentId>`).
+- `GET /students` → the graduate's church roster (churches keyed `tr_<churchName>`). Monarch graduates
+  first sync from Tracker `/api/graduate/students` (learner ids `m_<memberId>` or `e_<enrollmentId>`);
+  WDF graduates get the list last synced by their church's Monarch graduate (404 with a message if none).
   Each: `{...user, cell, modules, skill, enrolled, username, password, lastLoginAt, subjectIds, formSubjectIds}`
 - `POST /students/:id/enrol` `{subjectIds}` — creates username/password on first enrol; `[]` = unenrol
 - `POST /students/enrol-all` — every not-enrolled learner into their form subjects

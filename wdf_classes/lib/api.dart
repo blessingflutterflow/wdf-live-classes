@@ -16,15 +16,22 @@ DateTime? _dateOrNull(Object? v) => v == null ? null : _date(v);
 enum Role { teacher, learner, graduate }
 
 class User {
-  User({required this.id, required this.name, required this.role, this.photo});
+  User({required this.id, required this.name, required this.role, this.photo, this.company});
   final String id, name;
   final Role role;
   final String? photo;
 
+  /// Graduates: 'MONARCH' (Head of Curriculum) or 'WDF'.
+  final String? company;
+
   bool get isTeacher => role == Role.teacher;
   bool get isGraduate => role == Role.graduate;
   bool get isLearner => role == Role.learner;
-  String get roleLabel => switch (role) { Role.teacher => 'Teacher', Role.graduate => 'Graduate · Head of Curriculum', Role.learner => 'Learner' };
+  String get roleLabel => switch (role) {
+        Role.teacher => 'Teacher',
+        Role.graduate => company == 'WDF' ? 'WDF graduate' : 'Monarch graduate · Head of Curriculum',
+        Role.learner => 'Learner',
+      };
   String? get photoUrl => absolute(photo);
 
   factory User.fromJson(Map<String, dynamic> j) => User(
@@ -32,8 +39,9 @@ class User {
         name: j['name'] as String,
         role: Role.values.firstWhere((r) => r.name == j['role'], orElse: () => Role.learner),
         photo: j['photo'] as String?,
+        company: j['company'] as String?,
       );
-  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'role': role.name, 'photo': photo};
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'role': role.name, 'photo': photo, 'company': company};
 }
 
 class Subject {
