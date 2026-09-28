@@ -4,8 +4,7 @@ Live classes + assignments for WDF bursary learners. Built Sept 2026 with Nosiph
 COO, the product owner). **Paida takes over from here.** Server credentials are NOT in this repo —
 Nosipho sends them separately. Never commit secrets (see "Secrets").
 
-**Status: live and in real use** — on 28 Sep 2026 already 25 real graduates and ~3,900 synced
-learners. **Never reset or test against the production data any more** (`/opt/wdf-classes/data.json`);
+**Status: live and in real use** — on 28 Sep 2026: 33 graduates, ~4,500 learners, ~1,240 enrolled. **Never reset or test against the production data any more** (`/opt/wdf-classes/data.json`);
 test locally (see Tests). Back up `data.json` before every deploy. Web: https://learn.wdf.church · Android APK:
 https://learn.wdf.church/wdf-classes.apk · Video server: wss://classes.wdf.church (self-hosted LiveKit).
 
@@ -16,14 +15,16 @@ https://learn.wdf.church/wdf-classes.apk · Video server: wss://classes.wdf.chur
 - **Teachers**: timetable CRUD (weekly repeats), run live classes (screen share on web, mute/remove,
   raise-hand, chat), post assignments with deadline + brief, extend deadlines (whole subject or one
   learner), mark in % with feedback, see attendance.
-- **Graduates** sign in with their **app.wdf.church login** (accepted graduates only):
-  - *Monarch* graduates (each church's "Head of Curriculum") — their church's learners are pulled
-    live from the WDF Tracker each time they open Students.
-  - *WDF* graduates — share the Monarch graduate's list for the same church (the Tracker refuses
-    them the roster, so they see the list as last loaded by the Monarch graduate; if it was never
-    loaded they get a clear "ask your Monarch graduate / contact the WDF office" message).
-  Both can enrol (subjects pre-ticked from the bursary form), hand out logins (copy / Send on
-  WhatsApp), reset passwords, and both are alerted when a learner signs in.
+- **Graduates** sign in with their **app.wdf.church login** — ANY graduate the Tracker knows
+  (Monarch or WDF, approved or still waiting), except `status=REJECTED`:
+  - accepted *Monarch* graduates (each church's "Head of Curriculum"): their church's learners are
+    pulled live from the WDF Tracker each time they open Students;
+  - everyone else sees their church's list as last loaded by a Monarch graduate (can be empty);
+  - **everyone can "Add learner" by hand** (name, cell, 4 compulsory modules pre-ticked, one skill) —
+    enrolled at once. Hand-added learners (`x_…` ids, `addedBy`) exist ONLY in WDF Classes, not in
+    the Tracker, and survive roster syncs.
+  All graduates can enrol, hand out logins (copy / Send on WhatsApp), reset passwords, and every
+  graduate at the church is alerted when a learner signs in.
 - The church app (app.wdf.church, "Faith Hub") also shows a **WDF Classes box** on each student card
   for Monarch graduates (enrolled?, username/password, last sign-in).
 
@@ -80,7 +81,8 @@ DEV_PASSWORD, TRACKER_URL, PUBLIC_URL.
   marking, extensions) and `node graduate.js` (enrol, generated login, sign-in alert). Point at prod
   with `WEB=https://learn.wdf.church PW=<demo password>`. **Run each on fresh data** (reset between),
   they change state. **Do not run them against production** — it holds real graduates and learners now.
-  `test/e2e/mock-tracker.js` fakes the Tracker (Monarch, WDF, not-accepted graduates) for local runs.
+  `test/e2e/mock-tracker.js` fakes the Tracker (Monarch, WDF, not-yet-approved and rejected graduates)
+  for local runs; `addlearner.js` tests the hand-add flow.
 - Flutter web testing tips: enable semantics by clicking `flt-semantics-placeholder`; type with a
   400 ms pause after focusing a field and ~40 ms per key (fast typing drops characters); Flutter
   merges a card's texts into one aria-label, so match text inside labels (see `find()` in the tests);

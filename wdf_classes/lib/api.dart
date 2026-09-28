@@ -29,7 +29,11 @@ class User {
   bool get isLearner => role == Role.learner;
   String get roleLabel => switch (role) {
         Role.teacher => 'Teacher',
-        Role.graduate => company == 'WDF' ? 'WDF graduate' : 'Monarch graduate · Head of Curriculum',
+        Role.graduate => switch (company) {
+            'MONARCH' => 'Monarch graduate · Head of Curriculum',
+            'WDF' => 'WDF graduate',
+            _ => 'Graduate',
+          },
         Role.learner => 'Learner',
       };
   String? get photoUrl => absolute(photo);
@@ -389,6 +393,11 @@ class Api {
   /// Enrols into [subjectIds] (empty = unenrol). Creates the learner's login the first time.
   Future<Student> enrol(String learnerId, List<String> subjectIds) async =>
       Student.fromJson(await _send('POST', '/students/$learnerId/enrol', body: {'subjectIds': subjectIds}) as Map<String, dynamic>);
+
+  /// Graduate adds a learner by hand (not in the WDF system) — enrolled straight away.
+  Future<Student> addStudent({required String name, required String cell, required String skill, required List<String> modules}) async =>
+      Student.fromJson(await _send('POST', '/students', body: {'name': name, 'cell': cell, 'skill': skill, 'modules': modules})
+          as Map<String, dynamic>);
 
   Future<int> enrolAll() async => ((await _send('POST', '/students/enrol-all') as Map)['enrolled'] as int?) ?? 0;
 

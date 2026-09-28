@@ -39,7 +39,10 @@ Map<String, dynamic>? userByLogin(String login) {
 
 /// The 4 compulsory modules + the skills on the bursary form, one subject each.
 const compulsory = ['Job Readiness', 'Financial Literacy', 'Business Management', 'Learners & Driver\'s Licence']; // Tracker spelling
-const skills = ['Baking & Catering', 'Hairdressing & Beauty', 'Construction Management', 'Home Based Care', 'Retail Management'];
+const skills = [
+  'Baking & Catering', 'Hairdressing & Beauty', 'Construction Management', 'Home Based Care', 'Retail Management',
+  'Music / Dance / Art', 'Soccer / Netball', // the full bursary-form skill list
+];
 
 /// Everything persisted, in one JSON file.
 late Map<String, dynamic> db;
@@ -63,6 +66,7 @@ void main() async {
   lkSecret = env['LIVEKIT_API_SECRET']!;
   // (JSON round-trip so seeded collections are plain, growable dynamic maps/lists.)
   db = jsonDecode(dataFile.existsSync() ? dataFile.readAsStringSync() : jsonEncode(seed())) as Map<String, dynamic>;
+  ensureSubjects([...compulsory, ...skills]); // every module/skill is available for hand-added learners
   save();
 
   Timer.periodic(const Duration(seconds: 30), (_) => reminders());
@@ -392,17 +396,18 @@ Future<(Map<String, dynamic>?, String?)> trackerGraduateLogin(String identifier,
   final (_, meRaw) = await tracker('GET', '/api/graduate/me', token: token);
   final me = (meRaw is Map && meRaw['graduate'] is Map ? meRaw['graduate'] : meRaw) as Map? ?? const {};
   // /api/graduate/me calls the accepted company `company` (null until chosen).
-  // Monarch graduates (Head of Curriculum) AND WDF graduates may sign in; WDF graduates share the
-  // Monarch graduate's roster for their church (the Tracker only gives the roster to Monarch).
+  // Any graduate may sign in — Monarch or WDF, approved or still waiting — except rejected ones.
+  // Only accepted Monarch graduates get their roster from the Tracker; everyone can add learners.
   final company = me['company'] ?? me['acceptedCompany'];
-  if (me['status'] != 'ACCEPTED' || (company != 'MONARCH' && company != 'WDF')) {
-    return (null, 'Only accepted Monarch and WDF graduates can sign in to WDF Classes.');
+  if (me['status'] == 'REJECTED') {
+    return (null, 'Your graduate application was not approved, so you can\'t sign in to WDF Classes.');
   }
   final id = 'grad_${login['graduateId']}';
   final u = userById(id) ?? (<String, dynamic>{'id': id, 'role': 'graduate'}..also(allUsers.add));
   u
     ..['name'] = login['name'] ?? me['name'] ?? 'Graduate'
     ..['company'] = company
+    ..['status'] = me['status']
     ..['churchId'] = trackerChurchKey(me)
     ..['churchName'] = me['churchName']
     ..['trackerToken'] = token;
@@ -639,22 +644,42 @@ Future<void> handle(HttpRequest req) async {
   // ---- graduate: their church's learners (enrol, see logins, reset passwords)
   if (seg.isNotEmpty && seg[0] == 'students') {
     if (user['role'] != 'graduate') return send(req, 403, {'error': 'Only graduates manage students.'});
-    // Monarch graduates: pull their current students from the WDF Tracker first. WDF graduates
-    // can't (the Tracker refuses them) — they work from the list their Monarch graduate last loaded.
-    final monarch = user['company'] != 'WDF';
-    if (m == 'GET' && seg.length == 1 && user['trackerToken'] != null && monarch) {
+    // Accepted Monarch graduates: pull their current students from the WDF Tracker first. Everyone
+    // else (WDF, not yet approved) works from their church's list as last loaded, and can add learners.
+    final canSync = user['trackerToken'] != null && user['company'] == 'MONARCH' && user['status'] == 'ACCEPTED';
+    if (m == 'GET' && seg.length == 1 && canSync) {
       final err = await syncRoster(user);
       if (err != null) return send(req, err.startsWith('Please sign in') ? 401 : 502, {'error': err});
     }
     final roster = [for (final u in allUsers) if (u['role'] == 'learner' && u['churchId'] == user['churchId']) u];
-    if (m == 'GET' && seg.length == 1 && roster.isEmpty && !monarch) {
-      return send(req, 404, {
-        'error': 'Your church\'s learner list hasn\'t been loaded yet. Ask the Monarch graduate at your church to open '
-            'WDF Classes once (or their Students tab on app.wdf.church), then try again. '
-            'If your church has no Monarch graduate, please contact the WDF office.',
-      });
-    }
     if (m == 'GET' && seg.length == 1) return send(req, 200, [for (final u in roster) studentJson(u)]);
+    // Add a learner by hand (not in the WDF system) and enrol them straight away.
+    if (m == 'POST' && seg.length == 1) {
+      final name = (body['name'] as String? ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
+      final cell = (body['cell'] as String? ?? '').replaceAll(RegExp('[^0-9]'), '');
+      final skill = (body['skill'] as String?)?.trim();
+      final modules = ((body['modules'] as List?) ?? compulsory).map((e) => '$e').toList();
+      if (name.split(' ').length < 2) return send(req, 400, {'error': 'Enter the learner\'s name and surname.'});
+      if (!RegExp(r'^0[6-8]\d{8}$').hasMatch(cell)) return send(req, 400, {'error': 'Enter a valid 10-digit cell number, e.g. 0821234567.'});
+      final dup = roster.where((u) => u['cell'] == cell).firstOrNull;
+      if (dup != null) return send(req, 409, {'error': '${dup['name']} already has this cell number at your church.'});
+      ensureSubjects([...modules, ?skill]);
+      final u = <String, dynamic>{
+        'id': 'x_${newId()}',
+        'role': 'learner',
+        'name': name,
+        'churchId': user['churchId'],
+        'cell': cell,
+        'modules': modules,
+        'skill': skill,
+        'addedBy': uid, // added in WDF Classes — not in the WDF Tracker
+      };
+      allUsers.add(u);
+      enrol(u, formSubjectIds(u));
+      save();
+      changed(graduatesOf(u), 'students');
+      return send(req, 201, studentJson(u));
+    }
     if (m == 'POST' && path == '/students/enrol-all') {
       final waiting = roster.where((u) => u['enrolled'] != true).toList();
       for (final u in waiting) {

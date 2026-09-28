@@ -21,7 +21,7 @@ Demo emails use one shared password (`DEV_PASSWORD` env; `classes` locally).
 ## Auth / profile
 - `POST /auth/login` `{email, password}` — `email` may be an email, a learner username, or a cell number.
   Order: local user (email/username) → otherwise, if `TRACKER_URL` is set, Tracker graduate login
-  (`/api/graduate/login` then `/api/graduate/me`; only `status=ACCEPTED` with `company` MONARCH or WDF pass).
+  (`/api/graduate/login` then `/api/graduate/me`; any graduate except `status=REJECTED`).
   → `{token, user: {id, name, role, company?, photo}}`. Learners not yet enrolled get 403.
 - `GET /me` → user
 - `POST /me/photo` (raw JPEG) → user. Learners must have a photo before using the app.
@@ -54,7 +54,9 @@ Submission: `{learner, dueAt (incl. extension), extended, fileName, fileUrl, sub
 ## Graduates: enrolment
 - `GET /students` → the graduate's church roster (churches keyed `tr_<churchName>`). Monarch graduates
   first sync from Tracker `/api/graduate/students` (learner ids `m_<memberId>` or `e_<enrollmentId>`);
-  WDF graduates get the list last synced by their church's Monarch graduate (404 with a message if none).
+  Everyone else (WDF, not yet approved) gets the list as last synced by a Monarch graduate (may be empty).
+- `POST /students` `{name, cell, skill, modules?}` — graduate adds a learner by hand (not in the Tracker);
+  validates name+surname and a 10-digit SA cell, refuses a duplicate cell at the church, enrols at once.
   Each: `{...user, cell, modules, skill, enrolled, username, password, lastLoginAt, subjectIds, formSubjectIds}`
 - `POST /students/:id/enrol` `{subjectIds}` — creates username/password on first enrol; `[]` = unenrol
 - `POST /students/enrol-all` — every not-enrolled learner into their form subjects

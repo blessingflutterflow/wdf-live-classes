@@ -83,6 +83,24 @@ class _StudentsScreenState extends State<StudentsScreen> {
     }
   }
 
+  Future<void> _add() async {
+    final added = await showModalBottomSheet<Student>(
+      context: context,
+      useRootNavigator: true, // above the bottom tab bar
+      isScrollControlled: true,
+      constraints: const BoxConstraints(maxWidth: 680),
+      builder: (sheet) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(sheet).bottom),
+        child: _AddLearner(subjects: _subjects),
+      ),
+    );
+    if (added == null || !mounted) return;
+    await _load();
+    if (!mounted) return;
+    toast(context, '${added.user.name.split(' ').first} is added and enrolled. Share their login.');
+    _open(_students!.firstWhere((s) => s.user.id == added.user.id, orElse: () => added), MediaQuery.sizeOf(context).width >= 1000);
+  }
+
   void _open(Student s, bool wide) {
     if (wide) return setState(() => _selected = s.user.id);
     showModalBottomSheet<void>(
@@ -123,6 +141,16 @@ class _StudentsScreenState extends State<StudentsScreen> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Students'), titleSpacing: S.lg),
+      floatingActionButton: _students == null
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: _add,
+              backgroundColor: C.primary,
+              foregroundColor: Colors.white,
+              extendedPadding: const EdgeInsets.symmetric(horizontal: 28),
+              icon: const Icon(Icons.person_add_alt_1_rounded, size: 28),
+              label: const Text('Add learner', style: T.button),
+            ),
       body: _students == null
           ? Center(
               child: _error == null
@@ -177,7 +205,16 @@ class _StudentsScreenState extends State<StudentsScreen> {
                       const SizedBox(height: S.sm),
                     ]),
                   ),
-                  if (shown.isEmpty)
+                  if (all.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.all(S.xl),
+                      child: Text(
+                          'No learners here yet.\n\nTap "Add learner" to add your learners yourself. If your church has a '
+                          'Monarch graduate, their church list also appears here once they open WDF Classes.',
+                          style: T.body,
+                          textAlign: TextAlign.center),
+                    )
+                  else if (shown.isEmpty)
                     const Padding(padding: EdgeInsets.all(S.xl), child: Text('No learners match.', style: T.body, textAlign: TextAlign.center)),
                   for (final s in shown) _StudentRow(s, selected: wide && s.user.id == _selected, onTap: () => _open(s, wide)),
                 ]),
@@ -407,5 +444,100 @@ class _LoginCard extends StatelessWidget {
           const SizedBox(height: S.sm),
           OutlinedButton.icon(onPressed: onReset, icon: const Icon(Icons.lock_reset_rounded, size: 26), label: const Text('Reset password')),
         ]),
+      );
+}
+
+/// The 4 modules every bursary learner takes (same names as the WDF system).
+const _compulsory = ['Job Readiness', 'Financial Literacy', 'Business Management', "Learners & Driver's Licence"];
+
+/// Graduate adds a learner by hand: name, cell, the 4 compulsory modules (pre-ticked) and one skill.
+class _AddLearner extends StatefulWidget {
+  const _AddLearner({required this.subjects});
+  final List<Subject> subjects;
+
+  @override
+  State<_AddLearner> createState() => _AddLearnerState();
+}
+
+class _AddLearnerState extends State<_AddLearner> {
+  final _name = TextEditingController();
+  final _cell = TextEditingController();
+  final _modules = {..._compulsory};
+  String? _skill, _error;
+  bool _busy = false;
+
+  List<String> get _skills => [for (final s in widget.subjects) if (!_compulsory.contains(s.name)) s.name];
+
+  Future<void> _save() async {
+    if (_skill == null) return setState(() => _error = 'Choose the skill they want to study.');
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final s = await auth.api.addStudent(name: _name.text, cell: _cell.text, skill: _skill!, modules: _modules.toList());
+      if (mounted) Navigator.pop(context, s);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = e.toString();
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(S.lg, 0, S.lg, S.lg),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const Text('Add a learner', style: T.title),
+            const SizedBox(height: S.xs),
+            const Text('They are enrolled straight away and get a username and password.', style: T.meta),
+            const SizedBox(height: S.lg),
+            TextField(
+              controller: _name,
+              textCapitalization: TextCapitalization.words,
+              style: const TextStyle(fontSize: 19, color: C.ink),
+              decoration: const InputDecoration(labelText: 'Name and surname'),
+            ),
+            const SizedBox(height: S.base),
+            TextField(
+              controller: _cell,
+              keyboardType: TextInputType.phone,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(10)],
+              style: const TextStyle(fontSize: 19, color: C.ink),
+              decoration: const InputDecoration(labelText: 'Cell number', hintText: '0821234567'),
+            ),
+            const SizedBox(height: S.lg),
+            const Text('Compulsory modules', style: T.label),
+            const SizedBox(height: S.sm),
+            Wrap(spacing: S.sm, runSpacing: S.sm, children: [
+              for (final m in _compulsory)
+                FilterChip(
+                  label: Text(m),
+                  selected: _modules.contains(m),
+                  onSelected: (on) => setState(() => on ? _modules.add(m) : _modules.remove(m)),
+                  labelStyle: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: _modules.contains(m) ? Colors.white : C.ink),
+                  checkmarkColor: Colors.white,
+                  selectedColor: C.ink,
+                  backgroundColor: C.canvas,
+                  side: BorderSide(color: _modules.contains(m) ? C.ink : C.hairline),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(R.full)),
+                ),
+            ]),
+            const SizedBox(height: S.lg),
+            const Text('Skill (choose one)', style: T.label),
+            const SizedBox(height: S.sm),
+            Choices<String>(options: _skills, selected: _skill, label: (s) => s, onSelected: (s) => setState(() => _skill = s)),
+            if (_error != null) ...[
+              const SizedBox(height: S.md),
+              Text(_error!, style: T.meta.copyWith(color: C.error)),
+            ],
+            const SizedBox(height: S.xl),
+            FilledButton(onPressed: _busy ? null : _save, child: Text(_busy ? 'Adding…' : 'Add and enrol')),
+          ]),
+        ),
       );
 }
