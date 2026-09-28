@@ -1,0 +1,7 @@
+# Secrets & live data — never commit
+.env*
+**/tool/dev_data.json
+**/tool/uploads/
+*.pem
+# Build output
+wdf_classes/build/

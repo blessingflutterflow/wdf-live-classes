@@ -1,0 +1,7 @@
+{
+  "name": "wdf-classes-e2e",
+  "private": true,
+  "description": "Browser tests for WDF Classes (uses installed Chrome via playwright-core).",
+  "scripts": { "assign": "node assign.js", "graduate": "node graduate.js", "mock-tracker": "node mock-tracker.js" },
+  "dependencies": { "playwright-core": "^1.55.0" }
+}
