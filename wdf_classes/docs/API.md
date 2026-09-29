@@ -21,7 +21,7 @@ Demo emails use one shared password (`DEV_PASSWORD` env; `classes` locally).
 ## Auth / profile
 - `POST /auth/login` `{email, password}` — `email` may be an email, a learner username, or a cell number.
   Order: local user (email/username) → otherwise, if `TRACKER_URL` is set, Tracker graduate login
-  (`/api/graduate/login` then `/api/graduate/me`; any graduate except `status=REJECTED`).
+  (`/api/graduate/login` then `/api/graduate/me`; any graduate, whatever their status).
   → `{token, user: {id, name, role, company?, photo}}`. Learners not yet enrolled get 403.
 - `GET /me` → user
 - `POST /me/photo` (raw JPEG) → user. Learners must have a photo before using the app.

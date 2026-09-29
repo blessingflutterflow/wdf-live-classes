@@ -31,10 +31,40 @@ const maxUpload = 20 * 1024 * 1024;
 /// Users live in the data file: learners are created (with a username +
 /// password) when their graduate enrols them.
 List<Map<String, dynamic>> get allUsers => table('users');
-Map<String, dynamic>? userById(Object? id) => allUsers.where((u) => u['id'] == id).firstOrNull;
+
+// Indexes: with ~10k users a linear scan per lookup pinned the CPU (29 Sep 2026). Misses fall back
+// to a scan once and are cached, so users added later are found without extra bookkeeping.
+final _byId = <Object, Map<String, dynamic>>{};
+final _byLogin = <String, Map<String, dynamic>>{};
+
+Map<String, dynamic>? userById(Object? id) {
+  if (id == null) return null;
+  final hit = _byId[id];
+  if (hit != null && hit['id'] == id) return hit;
+  final u = allUsers.where((u) => u['id'] == id).firstOrNull;
+  if (u != null) _byId[id] = u;
+  return u;
+}
+
 Map<String, dynamic>? userByLogin(String login) {
   final l = login.toLowerCase().trim();
-  return allUsers.where((u) => u['email'] == l || u['username'] == l).firstOrNull;
+  if (l.isEmpty) return null;
+  final hit = _byLogin[l];
+  if (hit != null && (hit['email'] == l || hit['username'] == l)) return hit;
+  final u = allUsers.where((u) => u['email'] == l || u['username'] == l).firstOrNull;
+  if (u != null) _byLogin[l] = u;
+  return u;
+}
+
+void indexUsers() {
+  _byId.clear();
+  _byLogin.clear();
+  for (final u in allUsers) {
+    _byId[u['id'] as Object] = u;
+    for (final k in [u['email'], u['username']]) {
+      if (k is String && k.isNotEmpty) _byLogin[k] = u;
+    }
+  }
 }
 
 /// The 4 compulsory modules + the skills on the bursary form, one subject each.
@@ -67,10 +97,31 @@ void main() async {
   // (JSON round-trip so seeded collections are plain, growable dynamic maps/lists.)
   db = jsonDecode(dataFile.existsSync() ? dataFile.readAsStringSync() : jsonEncode(seed())) as Map<String, dynamic>;
   ensureSubjects([...compulsory, ...skills]); // every module/skill is available for hand-added learners
+  // Old notifications only slow every lookup down.
+  final cutoff = DateTime.now().toUtc().subtract(const Duration(days: 30)).toIso8601String();
+  table('notifications').removeWhere((n) => (n['createdAt'] as String? ?? '').compareTo(cutoff) < 0);
+  indexUsers();
   save();
+  // Write pending changes before a restart/deploy stops the process.
+  if (!Platform.isWindows) {
+    ProcessSignal.sigterm.watch().listen((_) {
+      flush();
+      exit(0);
+    });
+  }
 
-  Timer.periodic(const Duration(seconds: 30), (_) => reminders());
-  final server = await HttpServer.bind(cfg['BIND'] ?? '0.0.0.0', port)..autoCompress = true;
+  Timer.periodic(const Duration(seconds: 30), (_) {
+    // A timer error must never take the whole server down.
+    try {
+      reminders();
+    } catch (e) {
+      // ignore: avoid_print
+      print('reminders failed: $e');
+    }
+  });
+  // No on-the-fly compression: gzipping the ~7 MB app for every visitor pinned the CPU at 100% with
+  // ~1,900 phones connected (29 Sep 2026). Static files are pre-compressed at deploy (*.gz).
+  final server = await HttpServer.bind(cfg['BIND'] ?? '0.0.0.0', port);
   // ignore: avoid_print
   print('API on http://localhost:$port  ->  LiveKit $lkUrl${webDir != null ? '  (serving $webDir)' : ''}');
   // Every request runs concurrently: one slow phone (a big download on weak data, a stalled upload)
@@ -96,7 +147,32 @@ Future<void> serve(HttpRequest req) async {
   }
 }
 
-void save() => dataFile.writeAsStringSync(jsonEncode(db));
+/// Marks data as changed; it is written at most every 3 s. Rewriting the whole (10 MB+) file on
+/// every change pinned the CPU, and a failed write used to crash the server (29 Sep 2026).
+bool _dirty = false;
+Timer? _saveTimer;
+
+void save() {
+  _dirty = true;
+  _saveTimer ??= Timer(const Duration(seconds: 3), flush);
+}
+
+/// Writes to a temp file then renames, so a crash mid-write can never leave a half-written file.
+void flush() {
+  _saveTimer?.cancel();
+  _saveTimer = null;
+  if (!_dirty) return;
+  _dirty = false;
+  try {
+    final tmp = File('${dataFile.path}.tmp')..writeAsStringSync(jsonEncode(db));
+    tmp.renameSync(dataFile.path);
+  } catch (e) {
+    // ignore: avoid_print
+    print('save failed, retrying: $e');
+    _dirty = true;
+    _saveTimer = Timer(const Duration(seconds: 10), flush);
+  }
+}
 
 // ---------------------------------------------------------------- demo seed
 
@@ -239,9 +315,21 @@ Map<String, dynamic> userJson(Map<String, dynamic> u) => {
 Map<String, dynamic>? subjectOf(Map<String, dynamic> row) => byId('subjects', row['subjectId'] as String);
 
 bool inSubject(Map<String, dynamic> user, Map<String, dynamic>? s) =>
-    s != null && (s['teacherId'] == user['id'] || (s['learnerIds'] as List).contains(user['id']));
+    s != null && (s['teacherId'] == user['id'] || learnerSet(s).contains(user['id']));
 
 List<String> learnersOf(Map<String, dynamic> s) => (s['learnerIds'] as List).cast<String>();
+
+/// Set view of a subject's learners (subjects hold thousands; List.contains was a hot spot).
+/// Rebuilt whenever the list's length changes — every enrol/unenrol changes it.
+final _learnerSets = <Object?, (int, Set<Object?>)>{};
+Set<Object?> learnerSet(Map<String, dynamic> s) {
+  final list = s['learnerIds'] as List;
+  final cached = _learnerSets[s['id']];
+  if (cached != null && cached.$1 == list.length) return cached.$2;
+  final set = list.toSet();
+  _learnerSets[s['id']] = (list.length, set);
+  return set;
+}
 
 Future<Uint8List> readBody(HttpRequest req) async {
   final b = BytesBuilder(copy: false);
@@ -314,7 +402,7 @@ void reminders() {
       }
     }
   }
-  save();
+  // (notify() saves when something was sent — no blind rewrite every 30 s.)
 }
 
 // ---------------------------------------------------------------- assignments
@@ -396,12 +484,10 @@ Future<(Map<String, dynamic>?, String?)> trackerGraduateLogin(String identifier,
   final (_, meRaw) = await tracker('GET', '/api/graduate/me', token: token);
   final me = (meRaw is Map && meRaw['graduate'] is Map ? meRaw['graduate'] : meRaw) as Map? ?? const {};
   // /api/graduate/me calls the accepted company `company` (null until chosen).
-  // Any graduate may sign in — Monarch or WDF, approved or still waiting — except rejected ones.
-  // Only accepted Monarch graduates get their roster from the Tracker; everyone can add learners.
+  // EVERY graduate the Tracker knows may sign in — Monarch or WDF, approved, waiting or rejected
+  // (Nosipho, 28 Sep 2026: "ensure any person has power"). Only accepted Monarch graduates get their
+  // roster from the Tracker; everyone can add learners by hand.
   final company = me['company'] ?? me['acceptedCompany'];
-  if (me['status'] == 'REJECTED') {
-    return (null, 'Your graduate application was not approved, so you can\'t sign in to WDF Classes.');
-  }
   final id = 'grad_${login['graduateId']}';
   final u = userById(id) ?? (<String, dynamic>{'id': id, 'role': 'graduate'}..also(allUsers.add));
   u
@@ -489,6 +575,8 @@ void enrol(Map<String, dynamic> u, List<String> subjectIds) {
   u['enrolled'] = subjectIds.isNotEmpty;
   u['username'] ??= newUsername(u['name'] as String);
   u['password'] ??= newPassword();
+  _byLogin[u['username'] as String] = u;
+  _byId[u['id'] as Object] = u;
 }
 
 Map<String, dynamic> studentJson(Map<String, dynamic> u) => {
@@ -500,7 +588,7 @@ Map<String, dynamic> studentJson(Map<String, dynamic> u) => {
       'username': u['username'],
       'password': u['password'],
       'lastLoginAt': u['lastLoginAt'],
-      'subjectIds': [for (final s in table('subjects')) if (learnersOf(s).contains(u['id'])) s['id']],
+      'subjectIds': [for (final s in table('subjects')) if (learnerSet(s).contains(u['id'])) s['id']],
       'formSubjectIds': formSubjectIds(u),
     };
 
@@ -951,7 +1039,18 @@ Future<void> serveStatic(HttpRequest req) async {
     res.statusCode = 304;
     return res.close();
   }
-  await res.addStream(file.openRead());
+  // Serve the pre-compressed copy (made once at deploy) when the browser accepts gzip.
+  final gz = File('${file.path}.gz');
+  res.headers.set('vary', 'accept-encoding');
+  if ((req.headers.value('accept-encoding') ?? '').contains('gzip') && gz.existsSync()) {
+    res.headers
+      ..set('content-encoding', 'gzip')
+      ..contentLength = gz.lengthSync();
+    await res.addStream(gz.openRead());
+  } else {
+    res.headers.contentLength = stat.size;
+    await res.addStream(file.openRead());
+  }
   await res.close();
 }
 

@@ -16,7 +16,7 @@ https://learn.wdf.church/wdf-classes.apk · Video server: wss://classes.wdf.chur
   raise-hand, chat), post assignments with deadline + brief, extend deadlines (whole subject or one
   learner), mark in % with feedback, see attendance.
 - **Graduates** sign in with their **app.wdf.church login** — ANY graduate the Tracker knows
-  (Monarch or WDF, approved or still waiting), except `status=REJECTED`:
+  (Monarch or WDF, approved, waiting or rejected — Nosipho: "ensure any person has power"):
   - accepted *Monarch* graduates (each church's "Head of Curriculum"): their church's learners are
     pulled live from the WDF Tracker each time they open Students;
   - everyone else sees their church's list as last loaded by a Monarch graduate (can be empty);
@@ -93,6 +93,7 @@ DEV_PASSWORD, TRACKER_URL, PUBLIC_URL.
 cd wdf_classes
 dart compile exe tool/dev_server.dart --target-os linux --target-arch x64 -o build/deploy/classes-api
 flutter build web --wasm --release --dart-define=API_URL=https://learn.wdf.church -o build/web_prod
+python tool/precompress.py build/web_prod   # REQUIRED: server serves *.gz, never gzips per request
 tar czf build/deploy/web.tgz -C build/web_prod .
 # copy both to /tmp on the box, then as root:
 #   cp data.json data.json.bak-$(date +%s)   # ALWAYS back up live data first
@@ -102,8 +103,10 @@ tar czf build/deploy/web.tgz -C build/web_prod .
 flutter build apk --release --split-per-abi --target-platform android-arm64 --dart-define=API_URL=https://learn.wdf.church
 #   → /opt/wdf-classes/web/wdf-classes.apk  (still signed with the DEBUG key — see open items)
 ```
-- Service: `wdf-classes.service` (systemd), binary + `web/` + `data.json` (chmod 600) + `uploads/`
-  in `/opt/wdf-classes`, binds 127.0.0.1:8787. Env vars live in the unit file.
+- Service: `wdf-classes.service` (systemd), binary + `web/` + `data.json` + `uploads/` in
+  `/opt/wdf-classes`, binds 127.0.0.1:8787. Env vars live in the unit file, plus
+  `LimitNOFILE=65535` (thousands of open connections) and `UMask=0077` (data files private).
+  Stop the service BEFORE copying/backing up data.json (then check it parses).
 - Caddy (LiveKit's `livekit/caddyl4` container, config `/opt/livekit/caddy.yaml`) terminates TLS by
   SNI: `classes.wdf.church` → LiveKit :7880, `turn.classes.wdf.church` → TURN :5349,
   `learn.wdf.church` → :8787. Restart: `docker restart livekit-caddy-1`.
@@ -142,7 +145,15 @@ flutter build apk --release --split-per-abi --target-platform android-arm64 --da
 4. `PageWidth` must give content a tight width (LayoutBuilder + SizedBox) or wide layouts collapse
    into a narrow centred column.
 5. Seed data must be JSON round-tripped at startup, or typed map literals reject dynamic writes.
-6. Learner passwords are stored in plain text on purpose (graduates must be able to see and resend
+6. **Scale incident 29 Sep 2026** (~9k users, ~2.5k simultaneous connections): (a) "Too many open
+   files" at the default 1024 limit crashed the server 12x/day → `LimitNOFILE=65535`; (b) the
+   server gzipped the ~7 MB app per visitor on its single thread → 100% CPU, 12–30 s responses →
+   autoCompress OFF, deploy-time `tool/precompress.py`, serve `*.gz`; (c) every change rewrote the
+   10 MB data.json and a failed write crashed the process → debounced, atomic (tmp+rename) `save()`,
+   flushed on SIGTERM; (d) linear user lookups → id/login indexes, Set-based subject membership.
+   Next scaling step if it grows further: a real database, and LiveKit on its own box (it already
+   uses ~1.6 of the 4 CPUs during classes).
+7. Learner passwords are stored in plain text on purpose (graduates must be able to see and resend
    them — Nosipho's decision). Treat `data.json` as sensitive.
 
 ## Secrets (never commit)
