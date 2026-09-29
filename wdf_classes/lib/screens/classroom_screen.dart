@@ -41,11 +41,17 @@ class Classroom extends ChangeNotifier {
 
   /// Teacher pressed "Mute all": learners can't use their mic until the teacher lets them speak.
   /// Stored in the room's metadata so late joiners see it too; enforced by LiveKit permissions.
-  bool get micsLocked {
+  bool get micsLocked => _locks['micsLocked'] == true;
+
+  /// Teacher pressed "Cameras off": learners' cameras are off and blocked (saves the server's
+  /// capacity in big classes — each learner camera is sent to everyone in the room).
+  bool get camsLocked => _locks['camsLocked'] == true;
+
+  Map<String, dynamic> get _locks {
     try {
-      return (jsonDecode(room.metadata ?? '{}') as Map)['micsLocked'] == true;
+      return (jsonDecode(room.metadata ?? '{}') as Map).cast<String, dynamic>();
     } catch (_) {
-      return false;
+      return const {};
     }
   }
 
@@ -66,7 +72,9 @@ class Classroom extends ChangeNotifier {
         ..on<RoomMetadataChangedEvent>((_) => notifyListeners())
         // Mics locked: learners who join late are muted too (the teacher's app does it).
         ..on<ParticipantConnectedEvent>((e) {
-          if (isTeacher && micsLocked && !isTeacherP(e.participant)) _setMic(e.participant, allowed: false);
+          if (isTeacher && (micsLocked || camsLocked) && !isTeacherP(e.participant)) {
+            _perms(e.participant, mic: !micsLocked, cam: !camsLocked);
+          }
         })
         ..on<RoomDisconnectedEvent>((e) {
           endedReason = switch (e.reason) {
@@ -115,7 +123,18 @@ class Classroom extends ChangeNotifier {
     }
     await _safely(() => me!.setMicrophoneEnabled(!me!.isMicrophoneEnabled()));
   }
-  Future<void> toggleCamera() => _safely(() => me!.setCameraEnabled(!me!.isCameraEnabled()));
+  Future<void> toggleCamera() async {
+    if (!isTeacher && camsLocked && !me!.isCameraEnabled()) {
+      error = 'Your teacher has switched cameras off for this class.';
+      notifyListeners();
+      Future.delayed(const Duration(seconds: 5), () {
+        error = null;
+        notifyListeners();
+      });
+      return;
+    }
+    await _safely(() => me!.setCameraEnabled(!me!.isCameraEnabled()));
+  }
   Future<void> toggleScreen() => _safely(() => me!.setScreenShareEnabled(!me!.isScreenShareEnabled()));
   Future<void> toggleHand() => me!.setAttributes({...me!.attributes, 'hand': handRaised ? '' : '1'});
 
@@ -167,11 +186,24 @@ class Classroom extends ChangeNotifier {
 
   /// "Mute all" (lock) / "Unmute all" (unlock) for every learner in the room.
   Future<void> setMicsLocked(bool locked) async {
-    await _admin('UpdateRoomMetadata', {'metadata': jsonEncode({'micsLocked': locked})});
-    await Future.wait([
-      for (final p in room.remoteParticipants.values)
-        if (!isTeacherP(p)) _setMic(p, allowed: !locked),
-    ]);
+    final cams = camsLocked;
+    await _admin('UpdateRoomMetadata', {'metadata': jsonEncode({'micsLocked': locked, 'camsLocked': cams})});
+    await _forLearners((p) => _perms(p, mic: !locked, cam: !cams));
+  }
+
+  /// "Cameras off" (lock) / "Cameras on" (unlock) for every learner in the room.
+  Future<void> setCamsLocked(bool locked) async {
+    final mics = micsLocked;
+    await _admin('UpdateRoomMetadata', {'metadata': jsonEncode({'micsLocked': mics, 'camsLocked': locked})});
+    await _forLearners((p) => _perms(p, mic: !mics || mayTalk(p), cam: !locked));
+  }
+
+  // Big rooms: send the permission updates in batches rather than hundreds at once.
+  Future<void> _forLearners(Future<void> Function(Participant) f) async {
+    final learners = [for (final p in room.remoteParticipants.values) if (!isTeacherP(p)) p];
+    for (var i = 0; i < learners.length; i += 25) {
+      await Future.wait(learners.skip(i).take(25).map(f));
+    }
   }
 
   /// Let one learner speak while mics are locked: allow their mic and switch it on for them.
@@ -180,17 +212,19 @@ class Classroom extends ChangeNotifier {
     await me!.publishData(utf8.encode(jsonEncode({'cmd': 'allow_mic'})), reliable: true, topic: 'cmd', destinationIdentities: [p.identity]);
   }
 
-  /// Gives or takes away a learner's permission to publish their microphone. Without it LiveKit
-  /// removes their mic and refuses to let them switch it back on — the unmute button can't work.
-  Future<void> _setMic(Participant p, {required bool allowed}) => _admin('UpdateParticipant', {
+  Future<void> _setMic(Participant p, {required bool allowed}) => _perms(p, mic: allowed, cam: !camsLocked);
+
+  /// What a learner may publish. Without MICROPHONE (or CAMERA) in the list, LiveKit removes that
+  /// track and refuses to let them switch it back on — their button can't work.
+  Future<void> _perms(Participant p, {required bool mic, required bool cam}) => _admin('UpdateParticipant', {
         'identity': p.identity,
-        'attributes': {'mic': allowed ? '1' : '', if (!allowed) 'hand': ''},
+        'attributes': {'mic': mic ? '1' : '', if (!mic) 'hand': ''},
         'permission': {
           'canSubscribe': true,
           'canPublish': true,
           'canPublishData': true,
           'canUpdateMetadata': true,
-          'canPublishSources': ['CAMERA', 'SCREEN_SHARE', 'SCREEN_SHARE_AUDIO', if (allowed) 'MICROPHONE'],
+          'canPublishSources': ['SCREEN_SHARE', 'SCREEN_SHARE_AUDIO', if (mic) 'MICROPHONE', if (cam) 'CAMERA'],
         },
       });
 
@@ -576,14 +610,25 @@ class _Controls extends StatelessWidget {
           ),
           if (c.isTeacher)
             _RoundButton(
+              icon: c.camsLocked ? Icons.videocam_rounded : Icons.videocam_off_rounded,
+              label: c.camsLocked ? 'Cameras on' : 'Cameras off',
+              active: c.camsLocked,
+              onTap: () => c.setCamsLocked(!c.camsLocked),
+            ),
+          if (c.isTeacher)
+            _RoundButton(
               icon: c.micsLocked ? Icons.mic_external_on_rounded : Icons.mic_off_rounded,
               label: c.micsLocked ? 'Unmute all' : 'Mute all',
               active: c.micsLocked,
               onTap: () => c.setMicsLocked(!c.micsLocked),
             ),
           _RoundButton(
-            icon: me.isCameraEnabled() ? Icons.videocam_rounded : Icons.videocam_off_rounded,
-            label: 'Camera',
+            icon: !c.isTeacher && c.camsLocked && !me.isCameraEnabled()
+                ? Icons.lock_rounded
+                : me.isCameraEnabled()
+                ? Icons.videocam_rounded
+                : Icons.videocam_off_rounded,
+            label: !c.isTeacher && c.camsLocked && !me.isCameraEnabled() ? 'Cam off' : 'Camera',
             off: !me.isCameraEnabled(),
             onTap: c.toggleCamera,
           ),

@@ -41,6 +41,14 @@ async function open(browser, viewport, mobile, auth, id) {
   const id = (await api('/sessions', {}, t.token)).find((s) => s.title === title).id;
   const join = await api(`/sessions/${id}/join`, { method: 'POST' }, t.token); // admin token for checks
   const lk = join.url.replace(/^ws/, 'http');
+  const learnerTracks = async () => {
+    const r = await (await fetch(`${lk}/twirp/livekit.RoomService/ListParticipants`, {
+      method: 'POST', headers: { authorization: 'Bearer ' + join.token, 'content-type': 'application/json' },
+      body: JSON.stringify({ room: 'class-' + id }),
+    })).json();
+    const p = (r.participants || []).find((x) => x.identity === 'l1');
+    return (p?.tracks || []).filter((tr) => !tr.muted).map((tr) => tr.source);
+  };
   const learnerMic = async () => {
     const r = await (await fetch(`${lk}/twirp/livekit.RoomService/ListParticipants`, {
       method: 'POST', headers: { authorization: 'Bearer ' + join.token, 'content-type': 'application/json' },
@@ -93,6 +101,27 @@ async function open(browser, viewport, mobile, auth, id) {
     await lp.getByRole('button', { name: 'Mic' }).waitFor({ timeout: 8000 });
     await lp.getByRole('button', { name: 'Mic' }).click();
     await until(async () => (await learnerMic()).published);
+  });
+  await step('Learner turns camera on', async () => {
+    await lp.getByRole('button', { name: 'Camera' }).click();
+    await until(async () => (await learnerTracks()).some((s) => s === 'CAMERA' || s === 1));
+  });
+  await step('Teacher "Cameras off" -> learner camera goes off and cannot come back', async () => {
+    await tp.getByRole('button', { name: 'Cameras off' }).click();
+    await until(async () => !(await learnerTracks()).some((s) => s === 'CAMERA' || s === 1));
+    await lp.getByRole('button', { name: 'Cam off' }).waitFor({ timeout: 8000 });
+    await lp.getByRole('button', { name: 'Cam off' }).click();
+    await new Promise((r) => setTimeout(r, 3000));
+    if ((await learnerTracks()).some((s) => s === 'CAMERA' || s === 1)) throw new Error('learner turned camera back on');
+  });
+  await step('Mic still works while cameras are off (not locked)', async () => {
+    if (!(await learnerMic()).published) throw new Error('mic went off');
+  });
+  await step('Teacher "Cameras on" -> learner can use camera again', async () => {
+    await tp.getByRole('button', { name: 'Cameras on' }).click();
+    await lp.getByRole('button', { name: 'Camera' }).waitFor({ timeout: 8000 });
+    await lp.getByRole('button', { name: 'Camera' }).click();
+    await until(async () => (await learnerTracks()).some((s) => s === 'CAMERA' || s === 1));
   });
   await browser.close();
   await api(`/sessions/${id}`, { method: 'DELETE' }, t.token);
