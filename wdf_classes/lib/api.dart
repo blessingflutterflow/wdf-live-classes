@@ -49,15 +49,15 @@ class User {
 }
 
 class Subject {
-  Subject({required this.id, required this.name, required this.teacherName, required this.learners});
+  Subject({required this.id, required this.name, required this.teacherName, required this.learnerCount});
   final String id, name, teacherName;
-  final List<User> learners;
+  final int learnerCount;
 
   factory Subject.fromJson(Map<String, dynamic> j) => Subject(
         id: j['id'] as String,
         name: j['name'] as String,
         teacherName: (j['teacherName'] as String?) ?? '',
-        learners: [for (final l in (j['learners'] as List?) ?? []) User.fromJson(l as Map<String, dynamic>)],
+        learnerCount: (j['learnerCount'] as int?) ?? 0,
       );
 }
 

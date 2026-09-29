@@ -315,7 +315,11 @@ Map<String, dynamic> userJson(Map<String, dynamic> u) => {
 Map<String, dynamic>? subjectOf(Map<String, dynamic> row) => byId('subjects', row['subjectId'] as String);
 
 bool inSubject(Map<String, dynamic> user, Map<String, dynamic>? s) =>
-    s != null && (s['teacherId'] == user['id'] || learnerSet(s).contains(user['id']));
+    s != null && (teaches(user, s) || learnerSet(s).contains(user['id']));
+
+/// The subject's teacher, or a co-teacher listed in `teacherIds` (e.g. Mr Mnguni on every subject).
+bool teaches(Map<String, dynamic> user, Map<String, dynamic>? s) =>
+    s != null && (s['teacherId'] == user['id'] || ((s['teacherIds'] as List?) ?? const []).contains(user['id']));
 
 List<String> learnersOf(Map<String, dynamic> s) => (s['learnerIds'] as List).cast<String>();
 
@@ -436,7 +440,7 @@ Map<String, dynamic> submissionJson(Map<String, dynamic> a, String learnerId) {
 
 Map<String, dynamic> assignmentJson(Map<String, dynamic> a, Map<String, dynamic> user, {bool detail = false}) {
   final sub = subjectOf(a)!;
-  final teacher = sub['teacherId'] == user['id'];
+  final teacher = teaches(user, sub);
   final learners = learnersOf(sub);
   final subs = table('submissions').where((s) => s['assignmentId'] == a['id']).toList();
   return {
@@ -724,7 +728,8 @@ Future<void> handle(HttpRequest req) async {
             'id': s['id'],
             'name': s['name'],
             'teacherName': userById(s['teacherId'])?['name'],
-            if (s['teacherId'] == uid) 'learners': [for (final l in learnersOf(s)) userJson(userById(l)!)],
+            // A count, not the list: subjects hold thousands of learners (a full list was megabytes).
+            if (teaches(user, s)) 'learnerCount': learnersOf(s).length,
           },
     ]);
   }
@@ -820,7 +825,7 @@ Future<void> handle(HttpRequest req) async {
   }
   if (m == 'POST' && path == '/sessions') {
     final sub = byId('subjects', body['subjectId'] as String? ?? '');
-    if (!teacher || sub?['teacherId'] != uid) return send(req, 403, {'error': 'Choose one of your subjects.'});
+    if (!teacher || !teaches(user, sub)) return send(req, 403, {'error': 'Choose one of your subjects.'});
     final start = at(body['startsAt']);
     final weeks = body['repeatWeeks'] as int? ?? 0;
     for (var w = 0; w <= weeks; w++) {
@@ -840,7 +845,7 @@ Future<void> handle(HttpRequest req) async {
   if (seg.length >= 2 && seg[0] == 'sessions') {
     final s = byId('sessions', seg[1]);
     if (s == null || !inSubject(user, subjectOf(s))) return send(req, 404, {'error': 'That class no longer exists.'});
-    final owner = s['teacherId'] == uid;
+    final owner = s['teacherId'] == uid || teaches(user, subjectOf(s));
     final action = seg.length == 3 ? seg[2] : null;
     final learners = learnersOf(subjectOf(s)!);
 
@@ -895,7 +900,7 @@ Future<void> handle(HttpRequest req) async {
   }
   if (m == 'POST' && path == '/assignments') {
     final sub = byId('subjects', body['subjectId'] as String? ?? '');
-    if (!teacher || sub?['teacherId'] != uid) return send(req, 403, {'error': 'Choose one of your subjects.'});
+    if (!teacher || !teaches(user, sub)) return send(req, 403, {'error': 'Choose one of your subjects.'});
     final a = {
       'id': newId(),
       'subjectId': sub!['id'],
@@ -912,7 +917,7 @@ Future<void> handle(HttpRequest req) async {
     final a = byId('assignments', seg[1]);
     final sub = a == null ? null : subjectOf(a);
     if (a == null || !inSubject(user, sub)) return send(req, 404, {'error': 'That assignment no longer exists.'});
-    final owner = sub!['teacherId'] == uid;
+    final owner = teaches(user, sub!);
     final action = seg.length == 3 ? seg[2] : null;
     final learners = learnersOf(sub);
     final link = '/assignments/${a['id']}';

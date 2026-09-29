@@ -27,7 +27,7 @@ Demo emails use one shared password (`DEV_PASSWORD` env; `classes` locally).
 - `POST /me/photo` (raw JPEG) → user. Learners must have a photo before using the app.
 
 ## Subjects
-- `GET /subjects` → `[{id, name, teacherName, learners?}]` (teacher: theirs + learners; learner: enrolled; graduate: all)
+- `GET /subjects` → `[{id, name, teacherName, learnerCount?}]` (teacher/co-teacher: theirs + count; learner: enrolled; graduate: all)
 
 ## Classes (sessions)
 Session: `{id, subjectId, subjectName, title, description, teacherId, teacherName, startsAt, minutes}`

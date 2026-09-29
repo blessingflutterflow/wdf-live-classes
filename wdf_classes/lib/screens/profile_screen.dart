@@ -49,7 +49,7 @@ class ProfileScreen extends StatelessWidget {
                             Expanded(
                               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                                 Text(s.name, style: T.cardTitle),
-                                Text(u.isTeacher ? '${s.learners.length} learners' : s.teacherName, style: T.meta),
+                                Text(u.isTeacher ? '${s.learnerCount} learners' : s.teacherName, style: T.meta),
                               ]),
                             ),
                           ]),
