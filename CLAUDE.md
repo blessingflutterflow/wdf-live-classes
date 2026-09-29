@@ -12,9 +12,15 @@ https://learn.wdf.church/wdf-classes.apk · Video server: wss://classes.wdf.chur
 - **Learners**: sign in with a username + 6-digit password their graduate gave them → must add a
   selfie → see their classes (join live video), assignments (upload PDF/Word, see % + feedback),
   real-time alerts.
-- **Teachers**: timetable CRUD (weekly repeats), run live classes (screen share on web, mute/remove,
-  raise-hand, chat), post assignments with deadline + brief, extend deadlines (whole subject or one
-  learner), mark in % with feedback, see attendance.
+- **Teachers**: timetable CRUD (weekly repeats), run live classes, post assignments with deadline +
+  brief, extend deadlines (whole subject or one learner), mark in % with feedback, see attendance.
+- **Live classroom (29 Sep 2026, built for 300+ learners)**: ONE big stage — the teacher, the
+  teacher's screen share (teacher in a corner), or the unmuted learner while they talk. Learners join
+  with mic + camera LOCKED (their LiveKit token has `canPublish: false`); only the teacher unmutes a
+  learner, voice only (`UpdateParticipant` → `canPublishSources: [MICROPHONE]`). Teacher People panel:
+  Hands up (Unmute) / Speaking (Mute) / Everyone (search). Screen share: 1080p15 + 720p layer, pinch
+  zoom, full screen; Android app shares via `flutter_background` foreground service (not yet tested
+  on a real phone); phone browsers can't share. Test: `test/e2e/classroom.js` (real LiveKit).
 - **Graduates** sign in with their **app.wdf.church login** — ANY graduate the Tracker knows
   (Monarch or WDF, approved, waiting or rejected — Nosipho: "ensure any person has power"):
   - accepted *Monarch* graduates (each church's "Head of Curriculum"): their church's learners are
