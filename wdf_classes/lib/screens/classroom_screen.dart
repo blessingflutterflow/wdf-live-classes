@@ -39,6 +39,22 @@ class Classroom extends ChangeNotifier {
   LocalParticipant? get me => room.localParticipant;
   bool get handRaised => me?.attributes['hand'] == '1';
 
+  /// Teacher pressed "Mute all": learners can't use their mic until the teacher lets them speak.
+  /// Stored in the room's metadata so late joiners see it too; enforced by LiveKit permissions.
+  bool get micsLocked {
+    try {
+      return (jsonDecode(room.metadata ?? '{}') as Map)['micsLocked'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// A learner the teacher has let speak (attribute set by the teacher via LiveKit).
+  static bool mayTalk(Participant p) => p.attributes['mic'] == '1';
+
+  /// Can *I* use my mic right now?
+  bool get canTalk => isTeacher || !micsLocked || (me != null && mayTalk(me!));
+
   Future<void> start() async {
     try {
       final api = auth.api;
@@ -47,6 +63,11 @@ class Classroom extends ChangeNotifier {
       room.addListener(notifyListeners);
       _events
         ..on<DataReceivedEvent>(_onData)
+        ..on<RoomMetadataChangedEvent>((_) => notifyListeners())
+        // Mics locked: learners who join late are muted too (the teacher's app does it).
+        ..on<ParticipantConnectedEvent>((e) {
+          if (isTeacher && micsLocked && !isTeacherP(e.participant)) _setMic(e.participant, allowed: false);
+        })
         ..on<RoomDisconnectedEvent>((e) {
           endedReason = switch (e.reason) {
             DisconnectReason.participantRemoved => 'The teacher removed you from this class.',
@@ -82,7 +103,18 @@ class Classroom extends ChangeNotifier {
     }
   }
 
-  Future<void> toggleMic() => _safely(() => me!.setMicrophoneEnabled(!me!.isMicrophoneEnabled()));
+  Future<void> toggleMic() async {
+    if (!canTalk && !me!.isMicrophoneEnabled()) {
+      error = 'Your teacher has muted everyone. Raise your hand and the teacher will let you speak.';
+      notifyListeners();
+      Future.delayed(const Duration(seconds: 5), () {
+        error = null;
+        notifyListeners();
+      });
+      return;
+    }
+    await _safely(() => me!.setMicrophoneEnabled(!me!.isMicrophoneEnabled()));
+  }
   Future<void> toggleCamera() => _safely(() => me!.setCameraEnabled(!me!.isCameraEnabled()));
   Future<void> toggleScreen() => _safely(() => me!.setScreenShareEnabled(!me!.isScreenShareEnabled()));
   Future<void> toggleHand() => me!.setAttributes({...me!.attributes, 'hand': handRaised ? '' : '1'});
@@ -99,6 +131,10 @@ class Classroom extends ChangeNotifier {
       if (!chatOpen) unread++;
     } else if (e.topic == 'cmd' && j['cmd'] == 'lower_hand' && handRaised) {
       toggleHand();
+    } else if (e.topic == 'cmd' && j['cmd'] == 'allow_mic') {
+      // The teacher let me speak: switch my mic on (give LiveKit a moment to apply the permission).
+      Future.delayed(const Duration(milliseconds: 800), () => _safely(() => me!.setMicrophoneEnabled(true)));
+      if (handRaised) toggleHand();
     }
     notifyListeners();
   }
@@ -123,19 +159,58 @@ class Classroom extends ChangeNotifier {
       me!.publishData(utf8.encode(jsonEncode({'cmd': 'lower_hand'})), reliable: true, topic: 'cmd', destinationIdentities: [p.identity]);
 
   Future<void> muteMic(Participant p) async {
+    // While mics are locked, muting someone takes their "may speak" away again.
+    if (micsLocked) return _setMic(p, allowed: false);
     final pub = p.getTrackPublicationBySource(TrackSource.microphone);
     if (pub != null) await _admin('MutePublishedTrack', {'identity': p.identity, 'track_sid': pub.sid, 'muted': true});
   }
+
+  /// "Mute all" (lock) / "Unmute all" (unlock) for every learner in the room.
+  Future<void> setMicsLocked(bool locked) async {
+    await _admin('UpdateRoomMetadata', {'metadata': jsonEncode({'micsLocked': locked})});
+    await Future.wait([
+      for (final p in room.remoteParticipants.values)
+        if (!isTeacherP(p)) _setMic(p, allowed: !locked),
+    ]);
+  }
+
+  /// Let one learner speak while mics are locked: allow their mic and switch it on for them.
+  Future<void> letSpeak(Participant p) async {
+    await _setMic(p, allowed: true);
+    await me!.publishData(utf8.encode(jsonEncode({'cmd': 'allow_mic'})), reliable: true, topic: 'cmd', destinationIdentities: [p.identity]);
+  }
+
+  /// Gives or takes away a learner's permission to publish their microphone. Without it LiveKit
+  /// removes their mic and refuses to let them switch it back on — the unmute button can't work.
+  Future<void> _setMic(Participant p, {required bool allowed}) => _admin('UpdateParticipant', {
+        'identity': p.identity,
+        'attributes': {'mic': allowed ? '1' : '', if (!allowed) 'hand': ''},
+        'permission': {
+          'canSubscribe': true,
+          'canPublish': true,
+          'canPublishData': true,
+          'canUpdateMetadata': true,
+          'canPublishSources': ['CAMERA', 'SCREEN_SHARE', 'SCREEN_SHARE_AUDIO', if (allowed) 'MICROPHONE'],
+        },
+      });
 
   Future<void> remove(Participant p) => _admin('RemoveParticipant', {'identity': p.identity});
 
   Future<void> _admin(String method, Map<String, dynamic> body) async {
     final base = _join!.url.replaceFirst(RegExp('^ws'), 'http');
-    await http.post(
+    final res = await http.post(
       Uri.parse('$base/twirp/livekit.RoomService/$method'),
       headers: {'authorization': 'Bearer ${_join!.token}', 'content-type': 'application/json'},
       body: jsonEncode({'room': room.name, ...body}),
     );
+    if (res.statusCode >= 300) {
+      error = 'That didn\'t work — please try again.';
+      notifyListeners();
+      Future.delayed(const Duration(seconds: 4), () {
+        error = null;
+        notifyListeners();
+      });
+    }
   }
 
   List<Participant> get participants {
@@ -202,7 +277,10 @@ class _ClassroomScreenState extends State<ClassroomScreen> {
             children: [
               _TopBar(c),
               if (!c.room.canPlaybackAudio) _Banner('Tap to turn on class sound', onTap: c.room.startAudio),
-              if (c.error != null) _Banner(c.error!),
+              if (c.error != null)
+                _Banner(c.error!)
+              else if (!c.isTeacher && !c.canTalk)
+                const _Banner('🔒 Your teacher muted everyone. Raise your hand to speak.'),
               Expanded(
                 child: Row(
                   children: [
@@ -486,11 +564,23 @@ class _Controls extends StatelessWidget {
         runSpacing: S.md,
         children: [
           _RoundButton(
-            icon: me.isMicrophoneEnabled() ? Icons.mic_rounded : Icons.mic_off_rounded,
-            label: 'Mic',
+            // Locked by the teacher: a padlock, and tapping explains how to get the mic back.
+            icon: !c.canTalk && !me.isMicrophoneEnabled()
+                ? Icons.lock_rounded
+                : me.isMicrophoneEnabled()
+                ? Icons.mic_rounded
+                : Icons.mic_off_rounded,
+            label: !c.canTalk && !me.isMicrophoneEnabled() ? 'Muted' : 'Mic',
             off: !me.isMicrophoneEnabled(),
             onTap: c.toggleMic,
           ),
+          if (c.isTeacher)
+            _RoundButton(
+              icon: c.micsLocked ? Icons.mic_external_on_rounded : Icons.mic_off_rounded,
+              label: c.micsLocked ? 'Unmute all' : 'Mute all',
+              active: c.micsLocked,
+              onTap: () => c.setMicsLocked(!c.micsLocked),
+            ),
           _RoundButton(
             icon: me.isCameraEnabled() ? Icons.videocam_rounded : Icons.videocam_off_rounded,
             label: 'Camera',
@@ -737,13 +827,17 @@ class _PeoplePanel extends StatelessWidget {
                   ? PopupMenuButton<String>(
                       icon: const Icon(Icons.more_vert_rounded, color: Colors.white, size: 28),
                       onSelected: (a) => switch (a) {
+                        'speak' => c.letSpeak(p),
                         'hand' => c.lowerHand(p),
                         'mute' => c.muteMic(p),
                         _ => c.remove(p),
                       },
                       itemBuilder: (_) => [
+                        // Mics locked: the teacher picks who may speak (usually a raised hand).
+                        if (c.micsLocked && !Classroom.mayTalk(p)) const PopupMenuItem(value: 'speak', child: Text('Let speak')),
                         if (p.attributes['hand'] == '1') const PopupMenuItem(value: 'hand', child: Text('Lower hand')),
-                        if (p.isMicrophoneEnabled()) const PopupMenuItem(value: 'mute', child: Text('Mute mic')),
+                        if (p.isMicrophoneEnabled() || (c.micsLocked && Classroom.mayTalk(p)))
+                          const PopupMenuItem(value: 'mute', child: Text('Mute mic')),
                         const PopupMenuItem(value: 'remove', child: Text('Remove from class')),
                       ],
                     )
