@@ -1076,7 +1076,8 @@ String liveKitToken(Map<String, dynamic> user, String room, {required bool admin
     'video': {
       'room': room,
       'roomJoin': true,
-      'canPublish': true,
+      // Learners join with mic + camera LOCKED; only the teacher can unmute them (voice only).
+      'canPublish': user['role'] != 'learner',
       'canSubscribe': true,
       'canPublishData': true,
       'canUpdateOwnMetadata': true,
