@@ -103,6 +103,36 @@ Expect these aliases in `~/.ssh/config` (key-based, so Claude can run `ssh <alia
 Test: `ssh wdf-classes 'systemctl is-active wdf-classes livekit-docker'` and `ssh wdf-tracker 'hostname'`.
 The Hostinger box is shared and LIVE for all of WDF: read freely, but ask Nosipho before changing anything there.
 
+### First-time setup for Paida (self-service — no one else needs to be awake)
+Nosipho sends privately: `LightsailDefaultKey-eu-central-1.pem`, the Hostinger root password,
+`.env.livekit` (put it in the repo root, next to this file), and the demo password.
+1. `ssh-keygen -t ed25519 -f ~/.ssh/wdf_paida -C paida` (press Enter at each question).
+2. Lightsail: `ssh -i LightsailDefaultKey-eu-central-1.pem ubuntu@63.185.61.37 "cat >> ~/.ssh/authorized_keys" < ~/.ssh/wdf_paida.pub`
+3. Hostinger: `ssh root@72.62.6.25 "cat >> ~/.ssh/authorized_keys" < ~/.ssh/wdf_paida.pub` (asks the root password once).
+4. Add the two aliases to `~/.ssh/config` (HostName/User as in the table, `IdentityFile ~/.ssh/wdf_paida`,
+   `IdentitiesOnly yes`) and run the two tests above. From then on no password or .pem is needed.
+5. Tell Nosipho when done so the old .pem and root password can be rotated (both were shared in chats).
+
+## Where things stand (30 Sep 2026) — start here
+- **Accounts on prod**: demo `teacher@wdf.test` / `graduate@wdf.test` / `learner@wdf.test` /
+  `learner2@wdf.test` (shared demo password = DEV_PASSWORD in the service unit); **Mr Mnguni**
+  (the boss) = username `mnguni`, co-teacher of every subject (added with `tool/add_teacher.py`;
+  his password is with Nosipho). Real teachers still use the demo teacher — create named teacher
+  accounts with `tool/add_teacher.py` when Nosipho gives names.
+- **Capacity**: a live class reached **350 people** on the 4-vCPU box (LiveKit ~2.6 CPUs). The new
+  one-big-stage classroom cuts this a lot, but the agreed next step is **upgrading the Lightsail box to
+  8 vCPU / 32 GB**: Lightsail can't resize in place → snapshot `wdf-classroom` → create a new instance
+  from it with the bigger plan → copy its firewall rules (80, 443, 7881/tcp, 3478/udp,
+  50000-60000/udp) → outside class time: stop wdf-classes on the old box, copy the latest
+  `/opt/wdf-classes/data.json` + `uploads/` across → move static IP `wdf-classroom-ip` (63.185.61.37)
+  to the new instance → verify → keep the old one stopped a few days. Nosipho does the console clicks.
+- **Untested on a real device**: teacher screen sharing from the Android app (flutter_background
+  foreground service). Test on a phone before relying on it.
+- **Asked for, not built yet**: push notifications when the app is closed (needs a Firebase project),
+  class groups for huge subjects, real teacher accounts, a boss overview dashboard.
+- GitHub: repo `blessingflutterflow/wdf-live-classes`; this PC pushes as blessingflutterflow
+  (repo-local Git Credential Manager config).
+
 ## Deploy (Lightsail box "wdf-classroom", 63.185.61.37, user ubuntu, key from Nosipho)
 ```bash
 cd wdf_classes
