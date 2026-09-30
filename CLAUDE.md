@@ -94,6 +94,15 @@ DEV_PASSWORD, TRACKER_URL, PUBLIC_URL.
   merges a card's texts into one aria-label, so match text inside labels (see `find()` in the tests);
   SelectableText is not in the a11y tree.
 
+## Server access (credentials come from Nosipho — never commit them)
+Expect these aliases in `~/.ssh/config` (key-based, so Claude can run `ssh <alias> '<cmd>'` non-interactively):
+| Alias | Box | Host | User | What runs there |
+|---|---|---|---|---|
+| `wdf-classes` | AWS Lightsail "wdf-classroom" (Frankfurt) | 63.185.61.37 | ubuntu (use `sudo`) | WDF Classes API + web (`/opt/wdf-classes`), LiveKit + Caddy (`/opt/livekit`) |
+| `wdf-tracker` | Hostinger VPS | 72.62.6.25 | root | WDF Tracker (`/root/wdf-tracker`), church app app.wdf.church (`/root/church_App/demo_app`), many other WDF sites |
+Test: `ssh wdf-classes 'systemctl is-active wdf-classes livekit-docker'` and `ssh wdf-tracker 'hostname'`.
+The Hostinger box is shared and LIVE for all of WDF: read freely, but ask Nosipho before changing anything there.
+
 ## Deploy (Lightsail box "wdf-classroom", 63.185.61.37, user ubuntu, key from Nosipho)
 ```bash
 cd wdf_classes
