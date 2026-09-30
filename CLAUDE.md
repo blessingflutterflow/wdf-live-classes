@@ -104,20 +104,29 @@ Test: `ssh wdf-classes 'systemctl is-active wdf-classes livekit-docker'` and `ss
 The Hostinger box is shared and LIVE for all of WDF: read freely, but ask Nosipho before changing anything there.
 
 ### First-time setup for Paida (self-service — no one else needs to be awake)
-Nosipho sends privately: `LightsailDefaultKey-eu-central-1.pem`, the Hostinger root password,
-`.env.livekit` (put it in the repo root, next to this file), and the demo password.
+All logins/files are in the **encrypted** `handoff/secrets.enc` (AES-256). Paida gets the unlock
+code from Nosipho on WhatsApp. Unlock it OUTSIDE git's view (`handoff/unlocked/` is git-ignored):
+```bash
+mkdir -p handoff/unlocked && openssl enc -d -aes-256-cbc -pbkdf2 -iter 300000   -pass "pass:<UNLOCK CODE>" -in handoff/secrets.enc | tar xzf - -C handoff/unlocked
+cp handoff/unlocked/.env.livekit .env.livekit        # LiveKit key/secret for local runs
+chmod 600 handoff/unlocked/*.pem
+```
+`handoff/unlocked/LOGINS.txt` has both servers' logins and the app passwords. Never commit the
+unlocked files or paste them anywhere. Then (the .pem is `handoff/unlocked/LightsailDefaultKey-eu-central-1.pem`):
 1. `ssh-keygen -t ed25519 -f ~/.ssh/wdf_paida -C paida` (press Enter at each question).
 2. Lightsail: `ssh -i LightsailDefaultKey-eu-central-1.pem ubuntu@63.185.61.37 "cat >> ~/.ssh/authorized_keys" < ~/.ssh/wdf_paida.pub`
-3. Hostinger: `ssh root@72.62.6.25 "cat >> ~/.ssh/authorized_keys" < ~/.ssh/wdf_paida.pub` (asks the root password once).
+3. Hostinger: `ssh root@72.62.6.25 "cat >> ~/.ssh/authorized_keys" < ~/.ssh/wdf_paida.pub` (asks the root
+   password from LOGINS.txt once — Claude can't type into a password prompt, so Paida types it, or
+   use Python `paramiko` with the password to append the key).
 4. Add the two aliases to `~/.ssh/config` (HostName/User as in the table, `IdentityFile ~/.ssh/wdf_paida`,
    `IdentitiesOnly yes`) and run the two tests above. From then on no password or .pem is needed.
 5. Tell Nosipho when done so the old .pem and root password can be rotated (both were shared in chats).
+6. Delete `handoff/unlocked/` once your own key works.
 
 ## Where things stand (30 Sep 2026) — start here
 - **Accounts on prod**: demo `teacher@wdf.test` / `graduate@wdf.test` / `learner@wdf.test` /
-  `learner2@wdf.test` (shared demo password = DEV_PASSWORD in the service unit); **Mr Mnguni**
-  (the boss) = username `mnguni`, co-teacher of every subject (added with `tool/add_teacher.py`;
-  his password is with Nosipho). Real teachers still use the demo teacher — create named teacher
+  `learner2@wdf.test` (shared demo password in LOGINS.txt); **Mr Mnguni** (the boss) = username
+  `mnguni`, co-teacher of every subject (added with `tool/add_teacher.py`; password in LOGINS.txt). Real teachers still use the demo teacher — create named teacher
   accounts with `tool/add_teacher.py` when Nosipho gives names.
 - **Capacity**: a live class reached **350 people** on the 4-vCPU box (LiveKit ~2.6 CPUs). The new
   one-big-stage classroom cuts this a lot, but the agreed next step is **upgrading the Lightsail box to
