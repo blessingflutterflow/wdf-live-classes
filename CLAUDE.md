@@ -142,6 +142,47 @@ unlocked files or paste them anywhere. Then (the .pem is `handoff/unlocked/Light
 - GitHub: repo `blessingflutterflow/wdf-live-classes`; this PC pushes as blessingflutterflow
   (repo-local Git Credential Manager config).
 
+## Big classes / meetings — expect these issues (playbook from 29 Sep 2026)
+A live class ("Induction") reached **~350 people** on the 4-vCPU Lightsail box. What happened, and
+what to do next time. Another big meeting is planned — assume it will be similar or bigger.
+
+**Symptoms seen**
+- Users (even the teacher) get **"Can't reach the server. Check your connection."** when opening a
+  class, or the site takes 10–30 s to load. The class itself kept working for people already in it.
+- Cause: the whole box was CPU-bound — LiveKit ~2.6 of 4 CPUs (every learner camera is forwarded to
+  every viewer: 8 cameras × 274 people ≈ 2,200 streams), Caddy ~0.7, API ~0.75. The API call that
+  loads a class (`GET /sessions/:id` + `POST /join`) then exceeded the app's 15 s timeout.
+- Earlier the same day: API crash-loop from "Too many open files" and 100% CPU from per-request
+  gzip — both FIXED (see Gotcha 6). If you see "Too many open files" again, check `LimitNOFILE`.
+
+**Already built to reduce load** (deployed 29 Sep): one big stage (learners only receive the
+teacher/sharer + current speaker), learners join with mic+camera locked (no learner cameras at
+all), teacher-only unmute. This removes the learner-camera fan-out that caused the overload.
+
+**Quick health checks during a meeting** (read-only, safe any time)
+```bash
+ssh wdf-classes 'uptime; top -b -n1 -o %CPU | sed -n 8,11p'          # load; LiveKit/Caddy/API CPU
+ssh wdf-classes 'P=$(systemctl show -p MainPID --value wdf-classes); ps -o %cpu=,etime= -p $P;   ss -tn state established "( sport = :8787 )" | wc -l; curl -s -o /dev/null -w "%{time_total}s
+" http://127.0.0.1:8787/api/classes/me'
+curl -s -o /dev/null -w "%{http_code} %{time_total}s
+" https://learn.wdf.church/
+```
+People/cameras in live rooms: mint a LiveKit admin JWT from the key in `/opt/livekit/livekit.yaml`
+(`video: {roomList: true}` for ListRooms; `{roomAdmin: true, room: <name>}` for ListParticipants —
+a room-scoped token is required) and call `http://127.0.0.1:7880/twirp/livekit.RoomService/...`.
+
+**During a meeting — do / don't**
+- DON'T restart `wdf-classes` or `livekit-docker`, or deploy, while a class is live (everyone
+  reconnects at once — a reconnect storm). Swapping only `web/` is safe (no restart). Stage builds in
+  `/tmp/staged` and deploy after the class.
+- If people can't get in: have them tap "Back to timetable" and retry; ask the teacher to keep their
+  own camera on but not share video-heavy content; tell learners to close other tabs.
+- Local API answering in ms but public URL slow = the box is CPU-starved (LiveKit), not an app bug.
+
+**Before the next big meeting (the real fix)**: upgrade the box to 8 vCPU / 32 GB (steps in
+"Where things stand" below — snapshot → new instance → firewall → copy data.json → move static IP).
+Beyond ~500–600 in one room, consider LiveKit on its own server and/or splitting into groups.
+
 ## Deploy (Lightsail box "wdf-classroom", 63.185.61.37, user ubuntu, key from Nosipho)
 ```bash
 cd wdf_classes
